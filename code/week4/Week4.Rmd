@@ -1,0 +1,108 @@
+---
+title: "Week 4 assignmnet/quiz on IPTW"
+author: 
+- name: "Naresh Doni Jayavelu"
+  email: "nashchem@gmail.com"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{Week 4 assignmnet/quiz on IPTW}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Install required packages
+```{r, message=FALSE}
+# install.packages(c("tableone", "Matching", "MatchIt"))
+# install "MatcchIt" package via github
+# devtools::install_github("kosukeimai/MatchIt")
+# install.packages(c("ipw", "survey"))
+
+```
+
+
+# Load libraries
+
+```{r, message=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(MatchIt)
+library(Matching)
+library(tableone)
+library(ipw)
+library(survey)
+```
+
+
+# Load the data
+```{r, message=FALSE}
+
+data(lalonde, package = "MatchIt")
+# convert race to one-hot encoded
+lalonde_df <- mltools::one_hot(data.table::as.data.table(lalonde))
+
+# Q1: What are the minimum and maximum weights?  
+# ans: 1.009163 40.077293
+
+# define confounder variables
+xvars <- c("age", "educ", "race_black", "race_hispan", "married", "nodegree", "re74", "re75")
+
+#fit a propensity score model. logistic regression
+psmodel <- glm(treat ~ age + educ + race_black + race_hispan + married + nodegree + re74 + re75,
+    family=binomial(link = "logit"), data = lalonde_df)
+
+## value of propensity score for each subject
+ps <- predict(psmodel, type = "response")
+
+#create weights
+weight <- ifelse(lalonde_df$treat==1, 1/(ps), 1/(1-ps))
+range(weight)
+
+# Q2: Find the standardized differences for each confounder on the weighted (pseudo) population. 
+# What is the standardized difference for nodegree?
+# ans: 0.112
+
+#apply weights to data
+weighteddata <- svydesign(ids = ~ 1, data = lalonde_df, weights = ~ weight)
+
+#weighted table 1
+weightedtable <-svyCreateTableOne(vars = xvars, strata = "treat", 
+                                 data = weighteddata, test = FALSE)
+## Show table with SMD
+print(weightedtable, smd = TRUE)
+
+# Q3: Using IPTW, find the estimate and 95% confidence interval for the average causal effect. 
+# This can be obtained from svyglm
+# ans: 224.6763 (-1562.856 2012.208)
+
+lalonde_df <- lalonde_df %>%
+  mutate(wt = weight)
+#fit a marginal structural model (risk difference)
+msm <- (svyglm(re78 ~ treat, design = svydesign(~ 1, weights = ~wt,
+                  data = lalonde_df)))
+coef(msm)
+confint(msm)
+
+# Q4: Using IPTW with the truncated weights, find the
+# estimate and 95% confidence interval for the average causal effect
+# ans: 486.9336 (-1093.765 2067.632)
+
+# fit propensity score model to get weights, but truncated
+weightmodel<-ipwpoint(exposure= treat, family = "binomial", link ="logit",
+                      denominator= ~ age + educ + race_black + race_hispan + married + nodegree + re74 + re75, data = lalonde_df, trunc=.01)
+
+#numeric summary of weights
+summary(weightmodel$weights.trun)
+
+lalonde_df <- lalonde_df %>%
+  mutate(wt_trunc = weightmodel$weights.trun)
+
+msm_trunc <- svyglm(re78 ~ treat, design = svydesign(~ 1, weights = ~wt_trunc,
+                  data = lalonde_df))
+coef(msm_trunc)
+confint(msm_trunc)
+
+```
+
