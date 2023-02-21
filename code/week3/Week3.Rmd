@@ -1,0 +1,144 @@
+---
+title: "Week 3 assignmnet/quiz on Matching"
+author: 
+- name: "Naresh Doni Jayavelu"
+  email: "nashchem@gmail.com"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{Machine Learning models for asthma exacerbation rate}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Install required packages
+```{r, message=FALSE}
+# install.packages(c("tableone", "Matching", "MatchIt"))
+# install "MatcchIt" package via github
+# devtools::install_github("kosukeimai/MatchIt")
+
+```
+
+
+# Load libraries
+
+```{r, message=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(MatchIt)
+library(Matching)
+library(tableone)
+```
+
+
+# Load the data
+```{r, message=FALSE}
+
+data(lalonde, package = "MatchIt")
+# convert race to one-hot encoded
+lalonde_df <- mltools::one_hot(data.table::as.data.table(lalonde))
+
+# Q1: Find the standardized differences for all of the
+# confounding variables (pre-matching). What is the standardized difference for married (to nearest hundredth)?
+# ans: 0.719
+
+xvars <- c("age", "educ", "race_black", "race_hispan", "married", "nodegree", "re74", "re75")
+
+#look at a table 1
+table1<- tableone::CreateTableOne(vars=xvars,strata="treat", data=lalonde_df, test=FALSE)
+## include standardized mean difference (SMD)
+print(table1,smd=TRUE)
+
+# Q2: What is the raw (unadjusted) mean of real
+# earnings in 1978 for treated subjects minus the mean of real earnings in 1978
+# for untreated subjects? 
+# ans: -$635.0262
+
+mean_earnings <- lalonde_df %>%
+  group_by(treat) %>%
+  summarise(count = n(),
+            mean_re78 = mean(re78))
+
+
+# mean difference in earnings
+diff_mean_earnings <- mean_earnings$mean_re78[2] - mean_earnings$mean_re78[1]
+diff_mean_earnings
+
+# Q3: What are the minimum and maximum values of the estimated propensity score?  
+# ans: 0.009080193 0.853152844
+
+#fit a propensity score model. logistic regression
+
+psmodel <- glm(treat ~ age + educ + race_black + race_hispan + married + nodegree + re74 + re75,
+    family=binomial(), data = lalonde_df)
+
+#show coefficients etc
+summary(psmodel)
+#create propensity score
+pscore <- psmodel$fitted.values
+
+range(pscore) # 0.009080193 0.853152844
+
+# Q4: Match on the propensity score itself, not logit of the propensity score.  Obtain the standardized differences
+# for the matched data.
+# What is the standardized difference for married?  
+# ans: 0.027
+
+set.seed(931139)
+
+#do greedy matching on logit(PS) using Match with a caliper
+# logit <- function(p) {log(p)-log(1-p)}
+psmatch <- Match(Tr = lalonde_df$treat, M=1, X = pscore, replace=FALSE, caliper=NaN)
+matched <- lalonde_df[unlist(psmatch[c("index.treated","index.control")]), ]
+xvars <- c("age", "educ", "race_black", "race_hispan", "married", "nodegree", "re74", "re75")
+
+#get standardized differences
+matchedtab1 <- CreateTableOne(vars = xvars, strata ="treat", 
+                            data = matched, test = FALSE)
+print(matchedtab1, smd = TRUE)
+
+# Q5: For the propensity score matched data: Which variable has the largest standardized difference?     
+# ans: black 0.852
+
+# Q6: Re-do the matching, but use a caliper this time. Set the caliper=0.1 in the options in the Match function.
+# Again, before running the Match function, set the seed: >set.seed(931139)
+# ans: 111 per treatment group
+
+set.seed(931139)
+psmatch <- Match(Tr = lalonde_df$treat, M=1, X = pscore, replace=FALSE, caliper=0.1)
+matched <- lalonde_df[unlist(psmatch[c("index.treated","index.control")]), ]
+dim(matched)
+
+# Q7:  For the matched data, what is the mean of real earnings in 1978 for treated subjects minus the mean of real earnings in 1978 for untreated subjects? 
+# ans: $1246.81
+
+mean_earnings <- matched %>%
+  group_by(treat) %>%
+  summarise(count = n(),
+            mean_re78 = mean(re78))
+
+
+# mean difference in earnings
+diff_mean_earnings <- mean_earnings$mean_re78[2] - mean_earnings$mean_re78[1]
+diff_mean_earnings
+
+# Q8: Carry out a paired t-test for the effect of
+# treatment on earnings. What are the values of the 95% confidence interval?
+# ans: -2913.6398   420.0273
+
+tt_test <- t.test(re78~treat, paired = TRUE, data = matched)
+tt_test
+
+```
+
+
+
+
+
+
+
+
+
+
